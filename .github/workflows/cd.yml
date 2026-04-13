@@ -1,3 +1,10 @@
+# CD prerequisites (one-time on EC2):
+# 1) sudo apt install -y openjdk-11-jre-headless curl
+# 2) sudo mkdir -p /opt/bidder && sudo chown ubuntu:ubuntu /opt/bidder
+# 3) Copy deploy/bidder.service from this repo to /etc/systemd/system/bidder.service
+# 4) sudo systemctl daemon-reload && sudo systemctl enable bidder
+# GitHub repo secrets: SSH_HOST, SSH_USER, SSH_KEY (private key, full PEM including headers)
+
 name: CD
 
 on:
@@ -11,6 +18,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -21,27 +29,63 @@ jobs:
           cache: maven
 
       - name: Build JAR
-        run: chmod +x mvnw && ./mvnw -B -ntp -DskipTests package
+        run: |
+          chmod +x mvnw
+          ./mvnw -B -ntp -DskipTests package
+          mkdir -p deploy
+          cp target/bidder-*.jar deploy/bidder.jar
+          ls -la deploy/bidder.jar
 
-      - name: Copy JAR
+      - name: Copy JAR to server
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
-          source: "target/bidder-*.jar"
+          port: 22
+          source: "deploy/bidder.jar"
           target: "/opt/bidder/"
+          strip_components: 1
+          overwrite: true
 
-      - name: Restart app
+      - name: Install and restart
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
+          port: 22
+          command_timeout: 10m
           script: |
-            latest=$(ls -t /opt/bidder/target/bidder-*.jar 2>/dev/null | head -n1)
-            if [ -z "$latest" ]; then latest=$(ls -t /opt/bidder/bidder-*.jar | head -n1); fi
-            cp "$latest" /opt/bidder/bidder.jar
+            set -e
+            sudo mkdir -p /opt/bidder
+            if [ ! -f /opt/bidder/bidder.jar ]; then
+              echo "Expected /opt/bidder/bidder.jar after SCP"
+              ls -la /opt/bidder || true
+              exit 1
+            fi
+            if [ ! -f /etc/systemd/system/bidder.service ]; then
+              echo "::error::Create /etc/systemd/system/bidder.service first (see deploy/bidder.service in repo)."
+              exit 1
+            fi
+            sudo systemctl daemon-reload
             sudo systemctl restart bidder
-            sleep 8
-            curl -f http://localhost:8080/actuator/health || (sudo journalctl -u bidder -n 100 --no-pager && exit 1)
+            sleep 5
+            ok=""
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              code=$(curl -s -o /tmp/health.out -w "%{http_code}" http://127.0.0.1:8080/actuator/health || true)
+              if [ "$code" = "200" ]; then
+                echo "Health check OK (HTTP $code)"
+                cat /tmp/health.out
+                ok=1
+                break
+              fi
+              echo "Waiting for app... attempt $i HTTP $code"
+              sleep 5
+            done
+            if [ -z "$ok" ]; then
+              echo "::error::Health check failed after retries"
+              sudo journalctl -u bidder -n 120 --no-pager || true
+              curl -sS http://127.0.0.1:8080/actuator/health || true
+              exit 1
+            fi
