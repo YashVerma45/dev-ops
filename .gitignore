@@ -7,3 +7,11 @@
 /.vscode/
 *.log
 .DS_Store
+
+# Never commit keys
+y
+y.pub
+*.pem
+id_rsa
+id_ed25519
+id_ed25519.pub

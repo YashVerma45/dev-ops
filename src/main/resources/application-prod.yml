@@ -1,0 +1,8 @@
+# Use on EC2: java -Dspring.profiles.active=prod -jar bidder.jar
+# Or: SPRING_PROFILES_ACTIVE=prod
+
+management:
+  health:
+    elasticsearch:
+      # EC2 often has no Elasticsearch on localhost; avoids /actuator/health staying DOWN
+      enabled: false
