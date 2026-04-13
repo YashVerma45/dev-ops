@@ -33,7 +33,7 @@ jobs:
           chmod +x mvnw
           ./mvnw -B -ntp -DskipTests package
           mkdir -p deploy
-          cp target/bidder-*.jar deploy/bidder.jar
+          cp target/*-SNAPSHOT.jar deploy/bidder.jar
           ls -la deploy/bidder.jar
 
       - name: Copy JAR to server
