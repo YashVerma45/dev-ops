@@ -1,0 +1,25 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: bidder
+  elasticsearch:
+    rest:
+      uris: http://localhost:9200
+      connection-timeout: 5s
+      socket-timeout: 30s
+
+bidder:
+  elasticsearch:
+    # Legacy index name from original ElasticSearchManager sample
+    index-name: "12345678"
+
+---
+spring:
+  config:
+    activate:
+      on-profile: remote-es
+  elasticsearch:
+    rest:
+      uris: http://34.202.206.222:8080
