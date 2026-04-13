@@ -1,0 +1,47 @@
+name: CD
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+          cache: maven
+
+      - name: Build JAR
+        run: chmod +x mvnw && ./mvnw -B -ntp -DskipTests package
+
+      - name: Copy JAR
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          source: "target/bidder-*.jar"
+          target: "/opt/bidder/"
+
+      - name: Restart app
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            latest=$(ls -t /opt/bidder/target/bidder-*.jar 2>/dev/null | head -n1)
+            if [ -z "$latest" ]; then latest=$(ls -t /opt/bidder/bidder-*.jar | head -n1); fi
+            cp "$latest" /opt/bidder/bidder.jar
+            sudo systemctl restart bidder
+            sleep 8
+            curl -f http://localhost:8080/actuator/health || (sudo journalctl -u bidder -n 100 --no-pager && exit 1)
