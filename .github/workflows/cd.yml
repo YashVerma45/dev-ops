@@ -39,6 +39,17 @@ jobs:
           cp target/*-SNAPSHOT.jar deploy/bidder.jar
           ls -la deploy/bidder.jar
 
+      - name: Validate SSH deployment secrets
+        run: |
+          if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_KEY" ]; then
+            echo "::error::Missing SSH deployment secrets. Set SSH_HOST, SSH_USER, and SSH_KEY in repository secrets."
+            exit 1
+          fi
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+
       - name: Copy JAR to server
         uses: appleboy/scp-action@v0.1.7
         with:
