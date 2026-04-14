@@ -1,4 +1,4 @@
-idname: CD
+name: CD
 
 on:
   workflow_dispatch:
@@ -40,10 +40,10 @@ jobs:
 
       - name: Deploy on server
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} << 'ENDSSH'
             sudo mkdir -p /opt/bidder
             sudo systemctl daemon-reload
             sudo systemctl restart bidder
             sleep 5
             sudo systemctl status bidder --no-pager
-          EOF
+          ENDSSH
