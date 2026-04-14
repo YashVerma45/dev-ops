@@ -1,105 +1,49 @@
-# CD prerequisites (one-time on EC2):
-# 1) sudo apt install -y openjdk-11-jre-headless curl
-# 2) sudo mkdir -p /opt/bidder && sudo chown ubuntu:ubuntu /opt/bidder
-# 3) Copy deploy/bidder.service from this repo to /etc/systemd/system/bidder.service
-# 4) sudo systemctl daemon-reload && sudo systemctl enable bidder
-# GitHub repo secrets: SSH_HOST, SSH_USER, SSH_KEY (private key, full PEM including headers)
-
 name: CD
 
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
-
-permissions:
-  contents: read
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    branches: [main]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v6.0.2
 
-      - uses: actions/setup-java@v5.2.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "11"
-          cache: maven
 
       - name: Build JAR
         run: |
           chmod +x mvnw
-          ./mvnw -B -ntp -DskipTests package
+          ./mvnw -B -DskipTests package
           mkdir -p deploy
-          cp target/*-SNAPSHOT.jar deploy/bidder.jar
-          ls -la deploy/bidder.jar
+          cp target/*jar deploy/bidder.jar
 
-      - name: Validate SSH deployment secrets
+      - name: Setup SSH
         run: |
-          if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_KEY" ]; then
-            echo "::error::Missing SSH deployment secrets. Set SSH_HOST, SSH_USER, and SSH_KEY in repository secrets."
-            exit 1
-          fi
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_KEY: ${{ secrets.SSH_KEY }}
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
 
       - name: Copy JAR to server
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: 22
-          source: "deploy/bidder.jar"
-          target: "/opt/bidder/"
-          strip_components: 1
-          overwrite: true
+        run: |
+          scp -o StrictHostKeyChecking=no deploy/bidder.jar \
+          ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}:/opt/bidder/
 
-      - name: Install and restart
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: 22
-          command_timeout: 10m
-          script: |
-            set -e
+      - name: Deploy on server
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }} << 'EOF'
             sudo mkdir -p /opt/bidder
-            if [ ! -f /opt/bidder/bidder.jar ]; then
-              echo "Expected /opt/bidder/bidder.jar after SCP"
-              ls -la /opt/bidder || true
-              exit 1
-            fi
-            if [ ! -f /etc/systemd/system/bidder.service ]; then
-              echo "::error::Create /etc/systemd/system/bidder.service first (see deploy/bidder.service in repo)."
-              exit 1
-            fi
             sudo systemctl daemon-reload
             sudo systemctl restart bidder
             sleep 5
-            ok=""
-            for i in 1 2 3 4 5 6 7 8 9 10; do
-              code=$(curl -s -o /tmp/health.out -w "%{http_code}" http://127.0.0.1:8080/actuator/health || true)
-              if [ "$code" = "200" ]; then
-                echo "Health check OK (HTTP $code)"
-                cat /tmp/health.out
-                ok=1
-                break
-              fi
-              echo "Waiting for app... attempt $i HTTP $code"
-              sleep 5
-            done
-            if [ -z "$ok" ]; then
-              echo "::error::Health check failed after retries"
-              sudo journalctl -u bidder -n 120 --no-pager || true
-              curl -sS http://127.0.0.1:8080/actuator/health || true
-              exit 1
-            fi
+            sudo systemctl status bidder --no-pager
+          EOF
